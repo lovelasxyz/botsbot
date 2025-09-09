@@ -2,7 +2,7 @@ import logging
 import asyncio
 import os
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, ChatMemberUpdated
+from aiogram.types import Message, CallbackQuery, ChatMemberUpdated, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ChatMemberStatus
 from aiogram.filters import Command, ChatMemberUpdatedFilter
 from aiogram.fsm.context import FSMContext
@@ -12,12 +12,14 @@ from dotenv import load_dotenv
 # Загружаем переменные окружения
 load_dotenv()
 
-from models import AdminStates, ChannelManagementStates, LinkSettingsStates, UserManagementStates, StatsStates
+from models import AdminStates, ChannelManagementStates, LinkSettingsStates, UserManagementStates, StatsStates, CloneManagementStates
 from utils.keyboards import (
     get_admin_keyboard, get_channel_management_keyboard, get_user_management_keyboard,
     get_settings_keyboard, get_stats_keyboard, get_maintenance_keyboard,
-    get_cancel_keyboard, get_yes_no_keyboard, get_start_keyboard
+    get_cancel_keyboard, get_yes_no_keyboard, get_start_keyboard,
+    get_clone_management_keyboard, get_clone_action_keyboard, get_clone_list_keyboard
 )
+from services.clone_manager import clone_manager
 from utils.helpers import (
     check_admin, send_error_message, send_success_message, 
     cancel_state, format_user_list, format_channel_list
@@ -906,6 +908,406 @@ async def cmd_back_general(message: Message):
         return
     
     await cmd_admin(message)
+
+# =============================================================================
+# УПРАВЛЕНИЕ КЛОНАМИ
+# =============================================================================
+
+@router.message(F.text == "🤖 Клоны")
+async def cmd_clones(message: Message):
+    """Управление клонами ботов"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ У вас нет доступа к этой команде.", reply_markup=get_start_keyboard())
+        return
+    
+    clones = clone_manager.get_all_clones()
+    
+    # Обновляем статусы клонов
+    for clone in clones:
+        clone_manager.update_clone_status(clone.id)
+    
+    clones_text = f"🤖 <b>Управление клонами ботов</b>\n\n"
+    
+    if not clones:
+        clones_text += "Клонов пока нет.\n\n"
+        clones_text += "Создайте первый клон для расширения функциональности бота."
+    else:
+        clones_text += f"Всего клонов: {len(clones)}\n"
+        running_count = len([c for c in clones if c.status == "running"])
+        clones_text += f"Запущено: {running_count}\n\n"
+        
+        for clone in clones[:5]:  # Показываем первые 5
+            status_emoji = {
+                "running": "🟢",
+                "stopped": "🔴",
+                "error": "🟡"
+            }.get(clone.status, "⚫")
+            
+            clones_text += f"{status_emoji} <b>{clone.name}</b>\n"
+            clones_text += f"   Статус: {clone.status}\n"
+            if clone.last_started:
+                from datetime import datetime
+                try:
+                    last_started = datetime.fromisoformat(clone.last_started)
+                    clones_text += f"   Запущен: {last_started.strftime('%d.%m %H:%M')}\n"
+                except:
+                    pass
+            clones_text += "\n"
+        
+        if len(clones) > 5:
+            clones_text += f"... и ещё {len(clones) - 5} клонов\n"
+    
+    try:
+        await message.answer(
+            clones_text,
+            parse_mode="HTML",
+            reply_markup=get_clone_management_keyboard()
+        )
+    except Exception as e:
+        logger.error(f"Error sending clones panel with HTML: {e}")
+        clean_text = clones_text.replace('<b>', '').replace('</b>', '')
+        await message.answer(clean_text, reply_markup=get_clone_management_keyboard())
+
+@router.message(F.text == "➕ Создать клон")
+async def cmd_create_clone(message: Message, state: FSMContext):
+    """Создание нового клона"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ У вас нет доступа к этой команде.", reply_markup=get_start_keyboard())
+        return
+    
+    await message.answer(
+        "➕ <b>Создание нового клона</b>\n\n"
+        "Введите название для клона (например: 'Клон #1', 'Резервный бот'):",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(CloneManagementStates.waiting_for_clone_name)
+
+@router.message(CloneManagementStates.waiting_for_clone_name)
+async def process_clone_name(message: Message, state: FSMContext):
+    """Обработка названия клона"""
+    if await cancel_state(message, state):
+        return
+    
+    name = message.text.strip()
+    if not name or len(name) > 50:
+        await send_error_message(message, "❌ Название должно быть от 1 до 50 символов.")
+        return
+    
+    await state.update_data(clone_name=name)
+    
+    await message.answer(
+        f"📝 Название: <b>{name}</b>\n\n"
+        f"Теперь введите токен бота для клона:\n"
+        f"(получите его у @BotFather)",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(CloneManagementStates.waiting_for_clone_token)
+
+@router.message(CloneManagementStates.waiting_for_clone_token)
+async def process_clone_token(message: Message, state: FSMContext):
+    """Обработка токена клона"""
+    if await cancel_state(message, state):
+        return
+    
+    token = message.text.strip()
+    if not token or not token.count(':') == 1:
+        await send_error_message(message, "❌ Неверный формат токена. Токен должен содержать ':'")
+        return
+    
+    # Удаляем сообщение с токеном для безопасности
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    await state.update_data(clone_token=token)
+    
+    await message.answer(
+        "🔑 Токен получен!\n\n"
+        "Введите ID администраторов через запятую\n"
+        "(или оставьте пустым для использования текущих админов):",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(CloneManagementStates.waiting_for_clone_admin_ids)
+
+@router.message(CloneManagementStates.waiting_for_clone_admin_ids)
+async def process_clone_admin_ids(message: Message, state: FSMContext):
+    """Обработка ID админов клона"""
+    if await cancel_state(message, state):
+        return
+    
+    admin_ids_text = message.text.strip()
+    admin_ids = []
+    
+    if admin_ids_text:
+        try:
+            admin_ids = [int(x.strip()) for x in admin_ids_text.split(',') if x.strip().isdigit()]
+        except:
+            await send_error_message(message, "❌ Неверный формат ID. Используйте числа через запятую.")
+            return
+    
+    if not admin_ids:
+        admin_ids = ADMIN_IDS  # Используем текущих админов
+    
+    # Получаем данные из состояния
+    data = await state.get_data()
+    clone_name = data.get('clone_name')
+    clone_token = data.get('clone_token')
+    
+    # Создаем клон
+    await message.answer("⏳ Создаю клон...")
+    
+    clone_id = clone_manager.create_clone(clone_name, clone_token, admin_ids)
+    
+    if clone_id:
+        await send_success_message(
+            message,
+            f"✅ Клон создан успешно!\n\n"
+            f"📝 Название: {clone_name}\n"
+            f"🆔 ID: {clone_id}\n"
+            f"👥 Админов: {len(admin_ids)}\n\n"
+            f"Клон готов к запуску!"
+        )
+    else:
+        await send_error_message(message, "❌ Не удалось создать клон.")
+    
+    await message.answer("🤖 Клоны:", reply_markup=get_clone_management_keyboard())
+    await state.clear()
+
+@router.message(F.text == "📋 Список клонов")
+async def cmd_list_clones(message: Message):
+    """Показ списка всех клонов"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ У вас нет доступа к этой команде.", reply_markup=get_start_keyboard())
+        return
+    
+    clones = clone_manager.get_all_clones()
+    
+    if not clones:
+        await message.answer(
+            "🤖 Список клонов пуст.\n\n"
+            "Создайте первый клон для начала работы.",
+            reply_markup=get_clone_list_keyboard([])
+        )
+        return
+    
+    # Обновляем статусы
+    for clone in clones:
+        clone_manager.update_clone_status(clone.id)
+    
+    await message.answer(
+        "🤖 Выберите клон для управления:",
+        reply_markup=get_clone_list_keyboard(clones)
+    )
+
+@router.message(F.text == "🔄 Обновить статусы")
+async def cmd_update_clone_statuses(message: Message):
+    """Обновление статусов всех клонов"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ У вас нет доступа к этой команде.", reply_markup=get_start_keyboard())
+        return
+    
+    clones = clone_manager.get_all_clones()
+    
+    if not clones:
+        await message.answer("🤖 Нет клонов для обновления.")
+        return
+    
+    await message.answer("🔄 Обновляю статусы...")
+    
+    for clone in clones:
+        clone_manager.update_clone_status(clone.id)
+    
+    # Показываем обновленную информацию
+    await cmd_clones(message)
+
+# Обработчики inline кнопок для клонов
+@router.callback_query(F.data.startswith("manage_clone_"))
+async def callback_manage_clone(callback: CallbackQuery):
+    """Управление конкретным клоном"""
+    await callback.answer()
+    
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.message.answer("❌ У вас нет доступа к этой функции.")
+        return
+    
+    clone_id = callback.data.split("_", 2)[2]
+    clone = clone_manager.get_clone(clone_id)
+    
+    if not clone:
+        await callback.message.answer("❌ Клон не найден.")
+        return
+    
+    # Обновляем статус
+    clone_manager.update_clone_status(clone_id)
+    clone = clone_manager.get_clone(clone_id)  # Получаем обновленный
+    
+    status_text = {
+        "running": "🟢 Запущен",
+        "stopped": "🔴 Остановлен", 
+        "error": "🟡 Ошибка"
+    }.get(clone.status, "⚫ Неизвестно")
+    
+    # Получаем информацию о клон-боте для ссылки
+    try:
+        from aiogram import Bot
+        clone_bot = Bot(token=clone.token)
+        clone_bot_info = await clone_bot.get_me()
+        bot_username = clone_bot_info.username
+        clone_name_link = f"<a href='https://t.me/{bot_username}'>🤖 {clone.name}</a>" if bot_username else f"🤖 <b>{clone.name}</b>"
+        await clone_bot.session.close()
+    except Exception:
+        clone_name_link = f"🤖 <b>{clone.name}</b>"
+    
+    info_text = f"{clone_name_link}\n\n"
+    info_text += f"🆔 ID: {clone.id}\n"
+    info_text += f"📊 Статус: {status_text}\n"
+    info_text += f"👥 Админов: {len(clone.admin_ids)}\n"
+    info_text += f"📅 Создан: {clone.created_at[:10]}\n"
+    
+    if clone.last_started:
+        try:
+            from datetime import datetime
+            last_started = datetime.fromisoformat(clone.last_started)
+            info_text += f"⏰ Запущен: {last_started.strftime('%d.%m %H:%M')}\n"
+        except:
+            pass
+    
+    if clone.pid:
+        info_text += f"🔢 PID: {clone.pid}\n"
+    
+    info_text += f"\n🔐 <b>Секретная команда для админства:</b>\n"
+    info_text += f"<code>/daiadminky</code> - стать админом клона"
+    
+    try:
+        await callback.message.edit_text(
+            info_text,
+            parse_mode="HTML",
+            reply_markup=get_clone_action_keyboard(clone_id, clone.status, bot_username)
+        )
+    except Exception as e:
+        logger.error(f"Error editing clone info: {e}")
+        clean_text = info_text.replace('<b>', '').replace('</b>', '').replace('<a href=', '').replace('</a>', '').replace('<code>', '').replace('</code>', '')
+        await callback.message.edit_text(
+            clean_text,
+            reply_markup=get_clone_action_keyboard(clone_id, clone.status, bot_username)
+        )
+
+@router.callback_query(F.data.startswith("start_clone_"))
+async def callback_start_clone(callback: CallbackQuery):
+    """Запуск клона"""
+    await callback.answer("🔄 Запускаю клон...")
+    
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.message.answer("❌ У вас нет доступа к этой функции.")
+        return
+    
+    clone_id = callback.data.split("_", 2)[2]
+    
+    if clone_manager.start_clone(clone_id):
+        await callback.answer("✅ Клон запущен!", show_alert=True)
+        # Обновляем информацию
+        await callback_manage_clone(callback)
+    else:
+        await callback.answer("❌ Не удалось запустить клон!", show_alert=True)
+
+@router.callback_query(F.data.startswith("stop_clone_"))
+async def callback_stop_clone(callback: CallbackQuery):
+    """Остановка клона"""
+    await callback.answer("🔄 Останавливаю клон...")
+    
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.message.answer("❌ У вас нет доступа к этой функции.")
+        return
+    
+    clone_id = callback.data.split("_", 2)[2]
+    
+    if clone_manager.stop_clone(clone_id):
+        await callback.answer("✅ Клон остановлен!", show_alert=True)
+        # Обновляем информацию
+        await callback_manage_clone(callback)
+    else:
+        await callback.answer("❌ Не удалось остановить клон!", show_alert=True)
+
+@router.callback_query(F.data.startswith("delete_clone_"))
+async def callback_delete_clone(callback: CallbackQuery):
+    """Удаление клона"""
+    await callback.answer()
+    
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.message.answer("❌ У вас нет доступа к этой функции.")
+        return
+    
+    clone_id = callback.data.split("_", 2)[2]
+    clone = clone_manager.get_clone(clone_id)
+    
+    if not clone:
+        await callback.answer("❌ Клон не найден!", show_alert=True)
+        return
+    
+    # Подтверждение удаления
+    confirm_text = f"⚠️ <b>Подтверждение удаления</b>\n\n"
+    confirm_text += f"Вы действительно хотите удалить клон?\n"
+    confirm_text += f"📝 Название: {clone.name}\n"
+    confirm_text += f"🆔 ID: {clone.id}\n\n"
+    confirm_text += f"❗ Это действие нельзя отменить!"
+    
+    kb = [
+        [InlineKeyboardButton(text='✅ Да, удалить', callback_data=f'confirm_delete_clone_{clone_id}')],
+        [InlineKeyboardButton(text='❌ Отмена', callback_data=f'manage_clone_{clone_id}')]
+    ]
+    
+    try:
+        await callback.message.edit_text(
+            confirm_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        )
+    except Exception:
+        clean_text = confirm_text.replace('<b>', '').replace('</b>', '')
+        await callback.message.edit_text(
+            clean_text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        )
+
+@router.callback_query(F.data.startswith("confirm_delete_clone_"))
+async def callback_confirm_delete_clone(callback: CallbackQuery):
+    """Подтверждение удаления клона"""
+    await callback.answer()
+    
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.message.answer("❌ У вас нет доступа к этой функции.")
+        return
+    
+    clone_id = callback.data.split("_", 3)[3]
+    
+    if clone_manager.delete_clone(clone_id):
+        await callback.answer("✅ Клон удален!", show_alert=True)
+        await callback.message.edit_text(
+            "✅ Клон успешно удален!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text='↩️ К списку клонов', callback_data='back_to_clones')
+            ]])
+        )
+    else:
+        await callback.answer("❌ Не удалось удалить клон!", show_alert=True)
+
+@router.callback_query(F.data == "back_to_clones")
+async def callback_back_to_clones(callback: CallbackQuery):
+    """Возврат к списку клонов"""
+    await callback.answer()
+    
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+    
+    clones = clone_manager.get_all_clones()
+    
+    await callback.message.edit_text(
+        "🤖 Выберите клон для управления:",
+        reply_markup=get_clone_list_keyboard(clones)
+    )
 
 def setup(dp, bot, database, admin_ids, get_welcome_func, update_welcome_func):
     """Регистрация админских обработчиков"""

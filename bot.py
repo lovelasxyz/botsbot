@@ -15,15 +15,17 @@ from aiogram.types import BotCommand, BotCommandScopeDefault
 load_dotenv()
 
 # Получаем конфигурацию из .env
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-DATABASE_PATH = os.getenv('DATABASE_PATH', 'data/bot.db')
+# Поддержка клонов: используем INSTANCE_TOKEN если запущен как клон
+RUN_AS_CHILD = os.getenv('RUN_AS_CHILD', '0') == '1'
+BOT_TOKEN = os.getenv('INSTANCE_TOKEN') or os.getenv('BOT_TOKEN')
+DATABASE_PATH = os.getenv('INSTANCE_DB') or os.getenv('DATABASE_PATH', 'data/bot.db')
 ADMIN_IDS_STR = os.getenv('ADMIN_IDS', '')
 ADMIN_IDS = [int(x.strip()) for x in ADMIN_IDS_STR.split(',') if x.strip().isdigit()]
 LINK_EXPIRE_HOURS = int(os.getenv('LINK_EXPIRE_HOURS', '1'))
 MAX_LINK_USES = int(os.getenv('MAX_LINK_USES', '1'))
 AUTO_GENERATE_LINKS = os.getenv('AUTO_GENERATE_LINKS', 'true').lower() == 'true'
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
-SETTINGS_FILE = os.getenv('SETTINGS_FILE', 'bot_settings.json')
+SETTINGS_FILE = os.getenv('INSTANCE_SETTINGS') or os.getenv('SETTINGS_FILE', 'bot_settings.json')
 
 from handlers import register_all_handlers
 from database import Database
@@ -154,7 +156,8 @@ async def on_startup():
         
         # Обновление информации о боте
         bot_info = await bot.get_me()
-        logger.info(f"Bot started: @{bot_info.username} ({bot_info.full_name})")
+        clone_prefix = "[CLONE] " if RUN_AS_CHILD else ""
+        logger.info(f"{clone_prefix}Bot started: @{bot_info.username} ({bot_info.full_name})")
         
         # Синхронизация статусов каналов с Telegram (деактивация удаленных)
         try:

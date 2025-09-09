@@ -35,7 +35,7 @@ class Database:
         try:
             # PRAGMA-настройки для лучшей устойчивости к блокировкам
             self.cursor.execute("PRAGMA foreign_keys = ON")
-            self.cursor.execute("PRAGMA journal_mode = WAL")
+            self.cursor.execute("PRAGMA journal_mode = DELETE")
             self.cursor.execute("PRAGMA synchronous = NORMAL")
             self.cursor.execute("PRAGMA busy_timeout = 5000")  # мс
             self.connection.commit()

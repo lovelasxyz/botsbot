@@ -36,7 +36,8 @@ def get_admin_keyboard():
     """Основная клавиатура админ-панели"""
     kb = [
         [KeyboardButton(text='📢 Каналы'), KeyboardButton(text='⚙️ Настройки')],
-        [KeyboardButton(text='🔧 Обслуживание'), KeyboardButton(text='🔗 Текущие ссылки')]
+        [KeyboardButton(text='🤖 Клоны'), KeyboardButton(text='🔧 Обслуживание')],
+        [KeyboardButton(text='🔗 Текущие ссылки')]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False, is_persistent=True)
 
@@ -168,5 +169,59 @@ def create_pagination_keyboard(current_page: int, total_pages: int, callback_pre
             ))
         
         kb.append(row)
+    
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+def get_clone_management_keyboard():
+    """Клавиатура управления клонами"""
+    kb = [
+        [KeyboardButton(text='➕ Создать клон'), KeyboardButton(text='📋 Список клонов')],
+        [KeyboardButton(text='🔄 Обновить статусы')],
+        [KeyboardButton(text='↩️ Назад к админке')]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False, is_persistent=True)
+
+def get_clone_action_keyboard(clone_id: str, status: str, bot_username: str = None):
+    """Inline клавиатура для действий с клоном"""
+    kb = []
+    
+    # Кнопка открытия бота (если есть username)
+    if bot_username and status == "running":
+        kb.append([InlineKeyboardButton(text='🚀 Открыть бота', url=f'https://t.me/{bot_username}')])
+    
+    if status == "stopped":
+        kb.append([InlineKeyboardButton(text='▶️ Запустить', callback_data=f'start_clone_{clone_id}')])
+    elif status == "running":
+        kb.append([InlineKeyboardButton(text='⏹️ Остановить', callback_data=f'stop_clone_{clone_id}')])
+    
+    kb.extend([
+        [InlineKeyboardButton(text='📊 Статистика', callback_data=f'clone_stats_{clone_id}')],
+        [InlineKeyboardButton(text='⚙️ Настройки', callback_data=f'clone_settings_{clone_id}')],
+        [InlineKeyboardButton(text='🗑️ Удалить', callback_data=f'delete_clone_{clone_id}')],
+        [InlineKeyboardButton(text='↩️ Назад', callback_data='back_to_clones')]
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+def get_clone_list_keyboard(clones):
+    """Inline клавиатура со списком клонов"""
+    kb = []
+    
+    for clone in clones:
+        status_emoji = {
+            "running": "🟢",
+            "stopped": "🔴", 
+            "error": "🟡"
+        }.get(clone.status, "⚫")
+        
+        button_text = f"{status_emoji} {clone.name}"
+        if len(button_text) > 30:
+            button_text = f"{status_emoji} {clone.name[:25]}..."
+        
+        # Добавляем кнопку с именем клона    
+        kb.append([InlineKeyboardButton(
+            text=button_text,
+            callback_data=f'manage_clone_{clone.id}'
+        )])
     
     return InlineKeyboardMarkup(inline_keyboard=kb)

@@ -36,3 +36,10 @@ class StatsStates(StatesGroup):
     """Состояния для просмотра статистики"""
     waiting_for_channel_stats = State()
     waiting_for_stats_period = State()
+
+class CloneManagementStates(StatesGroup):
+    """Состояния для управления клонами"""
+    waiting_for_clone_name = State()
+    waiting_for_clone_token = State()
+    waiting_for_clone_admin_ids = State()
+    waiting_for_clone_action = State()

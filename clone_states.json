@@ -1,0 +1,20 @@
+{
+  "clones": [
+    {
+      "id": "b9aa2f41",
+      "name": "Clone2",
+      "token": "7692193614:AAElFLfQmW6JWndRstLiSpekIgJF40s5AfY",
+      "status": "running",
+      "database_path": "data/clone_b9aa2f41.db",
+      "settings_file": "clone_settings_b9aa2f41.json",
+      "admin_ids": [
+        8093896404,
+        7874016205,
+        718903327
+      ],
+      "created_at": "2025-09-09T19:23:46.936171",
+      "last_started": "2025-09-09T19:44:32.980850",
+      "pid": 1452
+    }
+  ]
+}
